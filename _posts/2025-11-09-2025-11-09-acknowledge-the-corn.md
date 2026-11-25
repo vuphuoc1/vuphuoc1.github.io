@@ -1,8 +1,9 @@
 ---
 title: "2025-11-09-Acknowledge-The-Corn"
 date: 2025-11-09 12:00:00 +0700
-categories: [DFIR]
-tags: [CTF]
+categories: [Hack The Box]
+tags: [CTF, Malware Analyst]
+Difficulty: [Hard]
 render_with_liquid: false
 ---
 
