@@ -1,3 +1,51 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;800&family=Rajdhani:wght@500;600;700&display=swap" rel="stylesheet">
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+  if (window.matchMedia('(hover: none)').matches) return;
+
+  var glow = document.createElement('div');
+  glow.id = 'cursor-glow';
+  document.body.appendChild(glow);
+
+  var x = 0, y = 0, gx = 0, gy = 0, last = 0;
+
+  document.addEventListener('mousemove', function (e) {
+    x = e.clientX;
+    y = e.clientY;
+
+    // vệt đuôi: tối đa 1 chấm mỗi 40ms để không nặng
+    var now = Date.now();
+    if (now - last > 40) {
+      last = now;
+      var t = document.createElement('div');
+      t.id = 'cursor-trail';
+      t.style.left = (x - 4) + 'px';
+      t.style.top = (y - 4) + 'px';
+      document.body.appendChild(t);
+      setTimeout(function () { t.remove(); }, 600);
+    }
+  });
+
+  // vòng sáng đuổi theo mượt
+  (function loop() {
+    gx += (x - gx) * 0.18;
+    gy += (y - gy) * 0.18;
+    glow.style.transform = 'translate(' + gx + 'px,' + gy + 'px)';
+    requestAnimationFrame(loop);
+  })();
+
+  // to ra khi rê vào link, nút, card
+  document.addEventListener('mouseover', function (e) {
+    if (e.target.closest('a, button, .card, .nav-link, .post-tag')) {
+      glow.classList.add('hover');
+    }
+  });
+  document.addEventListener('mouseout', function (e) {
+    if (e.target.closest('a, button, .card, .nav-link, .post-tag')) {
+      glow.classList.remove('hover');
+    }
+  });
+});
+</script>
