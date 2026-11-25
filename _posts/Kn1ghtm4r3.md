@@ -1,0 +1,1291 @@
+<img width="1492" height="737" alt="image" src="https://github.com/user-attachments/assets/01c32689-b183-45f2-abf0-018c85b97c95" />
+
+Sau khi tải chall về thì mình load vào FTK bị lỗi sau đó mình load vào HxD để xem magic bytes lí do lỗi là vì ảnh đĩa không mount được vì hai lớp hỏng chồng nhau: boot sector bị xóa BPB, và các bản ghi MFT bị đổi chữ ký. Sửa cả hai là điều kiện để đi tiếp.
+ <img width="1208" height="1018" alt="image" src="https://github.com/user-attachments/assets/eae82a2b-6892-455d-a13d-99394cc3c93c" />
+Quan sát ban đầu
+• Sector đầu có EB FF 90 thay vì EB 52 90, OEM là ApFS (mồi nhử, đây không phải APFS), các trường BPB bị giá trị rác. Lúc đầu mình đọc nhầm đây là FAT; HxD cho thấy boot code NTFS ở phần sau nên phải đổi hướng.
+• Kích thước ảnh 1.341.128.704 byte, tức 2.619.392 sector 512 byte.
+• Quét toàn ảnh theo bước 1024 byte: chỉ 7 bản ghi có chữ ký FILE, nhưng phần lớn các bản ghi còn lại có cấu trúc MFT hợp lệ với chữ ký mft?. Đó là dấu hiệu bị đổi chữ ký có chủ đích.
+• Các khối INDX (chỉ mục thư mục) cho phép suy ra kích thước cluster bằng cách đối chiếu vị trí các khối này.
+Mình viết 1 script để sửa lại file  ghi lại BPB với các tham số trên, ghi boot sector dự phòng vào sector cuối đĩa, rồi vá mọi mft? thành FILE ở đầu các bản ghi MFT:
+```
+import sys, struct, math, os
+
+SEC = 512
+
+def build(orig, cs, total, mft, mirr, rec):
+    b = bytearray(512)
+    b[0:3] = b"\xEB\x52\x90"
+    b[3:11] = b"NTFS    "
+    struct.pack_into("<H", b, 0x0B, 512)
+    b[0x0D] = cs // SEC
+    b[0x15] = 0xF8
+    struct.pack_into("<HH", b, 0x18, 63, 255)
+    struct.pack_into("<I", b, 0x24, 0x00800080)
+    struct.pack_into("<Q", b, 0x28, total)
+    struct.pack_into("<Q", b, 0x30, mft)
+    struct.pack_into("<Q", b, 0x38, mirr)
+    b[0x40] = rec // cs if rec >= cs else 256 - int(math.log2(rec))
+    b[0x44] = 4096 // cs if cs <= 4096 else 256 - 12
+    struct.pack_into("<Q", b, 0x48, 0x1122334455667788)
+    b[0x54:0x1FE] = orig[0x54:0x1FE]
+    b[0x1FE:0x200] = b"\x55\xAA"
+    return bytes(b)
+
+def main():
+    args = sys.argv[1:]
+    opt = {"cs": 4096, "mft": 170581, "mirr": 2, "rec": 1024}
+    pos = []
+    i = 0
+    while i < len(args):
+        if args[i].startswith("--"):
+            opt[args[i][2:]] = int(args[i + 1], 0); i += 2
+        else:
+            pos.append(args[i]); i += 1
+    src, dst = pos
+    size = os.path.getsize(src)
+    total = size // SEC - 1
+    print("tham so:", opt, "| total sectors:", total)
+
+    # 1) sao chep image goc sang file moi
+    with open(src, "rb") as f, open(dst, "wb") as g:
+        while True:
+            blk = f.read(64 * 1024 * 1024)
+            if not blk:
+                break
+            g.write(blk)
+
+    # 2) dung lai boot sector + ban sao o sector cuoi
+    with open(dst, "r+b") as g:
+        g.seek(0); orig = g.read(512)
+        bs = build(orig, opt["cs"], total, opt["mft"], opt["mirr"], opt["rec"])
+        g.seek(0); g.write(bs)
+        g.seek(total * SEC); g.write(bs)
+
+    # 3) sua chu ky 'mft?' -> 'FILE' o dau moi ban ghi MFT (can chinh 1024, co cau truc hop le)
+    patched = 0
+    CH = 64 * 1024 * 1024
+    with open(dst, "r+b") as g:
+        off = 0
+        while off < size:
+            g.seek(off)
+            data = bytearray(g.read(CH + 1024))
+            changed = False
+            p = 0
+            while True:
+                i = data.find(b"mft?", p)
+                if i < 0 or i >= CH:
+                    break
+                p = i + 1
+                if (off + i) % 1024:
+                    continue
+                if data[i + 4:i + 6] == b"\x30\x00" and data[i + 0x14:i + 0x16] == b"\x38\x00":
+                    data[i:i + 4] = b"FILE"; patched += 1; changed = True
+            if changed:
+                g.seek(off); g.write(data[:CH])
+            off += CH
+    print("Da va", patched, "ban ghi MFT ('mft?' -> 'FILE')")
+    print("Da ghi", dst)
+
+main()
+```
+```
+python fix_all.py kn1ghtm4r3.img kn1ghtm4r3_fixed.img
+```
+Mình load lại vào FTK thì oke rồi
+<img width="1835" height="960" alt="image" src="https://github.com/user-attachments/assets/ec6ae937-1cff-4eef-888a-aa30eea5c274" />
+
+Sau khi mount, Users\LukeFox\Downloads chứa toàn file .kn1ghtm4r3, nên bài toán trở thành tìm chương trình đã tạo ra chúng.Đối tượng chính của bài là file HEIC; các file còn lại là bộ cài phần mềm công khai, và sẽ hữu ích ở phần sau.
+Với kinh nghiệm của mình thì malware thường sẽ được lưu trong temp lí do như sau:
+• Ngụy trang khéo: Lẫn lộn với hàng nghìn file rác thông thường nên khó bị phát hiện bằng mắt thường.
+• Dễ ghi file: Các ứng dụng mặc định có sẵn quyền đọc/ghi vào đây mà ít bị chặn.
+• Nơi trung gian: Dùng làm trạm trung chuyển để bung file độc hại (payload) và kích hoạt chạy.
+<img width="1822" height="985" alt="image" src="https://github.com/user-attachments/assets/37bed8ff-9064-47a9-946e-391bf5cb8604" />
+
+Trong Users\LukeFox\AppData\Local\Temp có một file thực thi lạ savenotes.exe. Mình load lên VirusTotal và thấy báo là malware. Nó là PE64, viết bằng Rust (các hàm lang_start, panic và Result::unwrap), image base 0x140000000.
+<img width="1882" height="893" alt="image" src="https://github.com/user-attachments/assets/b4dbff0e-0de9-4ae7-a2e9-fd65bb9190dd" />
+Mình  dùng IDA để phân tích và thu được hàm main như sau:
+```
+int __fastcall main(int argc, const char **argv, const char **envp)
+{
+  char v4; // [rsp+20h] [rbp-18h]
+  __int64 (__fastcall *v5)(); // [rsp+30h] [rbp-8h] BYREF
+
+  v5 = sub_140001810;
+  v4 = 0;
+  return sub_140022D90(&v5, &off_140044E38, argc, argv, v4);
+}
+```
+Từ pseudocode của hàm main, hàm chương trình chính là hàm sub_140001810.
+```
+int sub_140001810()
+{
+  __int64 v0; // rax
+  int v1; // edx
+  unsigned int v2; // eax
+  _QWORD *v3; // rax
+  __int64 v4; // rax
+  const __m128i *v5; // rbx
+  unsigned int v6; // r12d
+  const __m128i *v7; // r15
+  int v9; // r12d
+  __int64 v11; // rdi
+  __int64 i; // r14
+  __int64 v13; // rsi
+  const void **v14; // r13
+  const void *v15; // rax
+  size_t v16; // rdx
+  HANDLE CurrentThread; // rax
+  char v18; // al
+  __int64 j; // rcx
+  __int128 *v20; // r8
+  unsigned __int8 v21; // r9
+  unsigned __int64 k; // rcx
+  char v23; // dl
+  __int64 v24; // rax
+  __int64 v25; // rcx
+  unsigned __int8 v26; // dl
+  char v27; // r9
+  const __m128i *v29; // rdi
+  __int64 v30; // rbx
+  const __m128i *v32; // r14
+  int v33; // r12d
+  __int64 v34; // rsi
+  __int64 v35; // rdx
+  DWORD v36; // edi
+  BOOL v37; // edx
+  volatile signed __int64 *v38; // rbx
+  int v39; // edx
+  _BYTE *v40; // rdi
+  __int64 v41; // rdx
+  __int64 v42; // rbx
+  const CHAR *v43; // rax
+  volatile signed __int64 *v44; // rax
+  int v45; // edx
+  HMODULE P1Home; // r14
+  const CHAR *v47; // rax
+  FARPROC ProcAddress; // rax
+  FARPROC v49; // r14
+  _QWORD *v50; // r15
+  volatile signed __int64 *v51; // rax
+  int v52; // edx
+  volatile signed __int64 *v53; // rax
+  int v54; // edx
+  volatile signed __int64 *v55; // rax
+  int v56; // edx
+  volatile signed __int64 *v57; // rax
+  int v58; // edx
+  __int64 v59; // rax
+  __int64 v60; // rdx
+  __m128i v61; // xmm0
+  __int64 v62; // rax
+  __int64 v63; // rdx
+  __int64 v64; // rax
+  __int64 v65; // rdx
+  __int64 v66; // rax
+  __int64 v67; // rdx
+  __int64 v68; // rdx
+  __int64 v69; // rsi
+  __int64 v70; // rax
+  __int64 v71; // rdx
+  void *v72; // rdx
+  __m128i v73; // xmm0
+  __int64 v74; // rax
+  unsigned __int64 v75; // rsi
+  __int64 v76; // rdx
+  __int64 v77; // rax
+  int v78; // edx
+  DWORD64 v79; // rax
+  __int64 *v80; // r8
+  unsigned __int64 m; // rcx
+  __int64 v82; // rax
+  __int64 v83; // rdx
+  DWORD64 v84; // rdi
+  __int64 *v85; // r12
+  DWORD64 v86; // rsi
+  __int64 *v87; // r14
+  __int64 v88; // rax
+  __int64 v89; // r12
+  __int64 v90; // rdx
+  __int64 v91; // r13
+  __int64 v92; // rax
+  __int64 v93; // rdx
+  __int64 v94; // rdx
+  __int64 v95; // rax
+  __int64 v96; // rax
+  void *v97; // rdx
+  __int64 v98; // rdi
+  __int64 v99; // rax
+  __int64 v100; // rdx
+  __int64 v101; // rdx
+  __int64 v102; // rdi
+  __int64 v103; // r15
+  __int64 v104; // rax
+  __int64 v105; // rdx
+  __m128i v106; // xmm0
+  __int64 v107; // rax
+  __int64 v108; // rdx
+  __m128i si128; // xmm0
+  __int64 v110; // rax
+  void *v111; // rdx
+  void *v112; // r12
+  __m128i v113; // xmm0
+  __int64 v114; // rax
+  __int64 v115; // rdi
+  __int64 v116; // rdx
+  void (**v117)(void); // rax
+  __int64 v118; // rdx
+  DWORD64 v119; // rdi
+  DWORD64 v120; // rax
+  __int64 v121; // rsi
+  __int64 v122; // rax
+  __int64 v123; // rax
+  __int64 v124; // rdx
+  __int64 v125; // rax
+  DWORD64 v126; // rax
+  int result; // eax
+  __int64 v128; // rdx
+  __int64 *v129; // rax
+  DWORD64 v130; // rsi
+  __m128i v131; // xmm0
+  DWORD64 *v132; // rax
+  volatile signed __int64 *v133[2]; // [rsp+38h] [rbp-48h] BYREF
+  _BYTE v134[584]; // [rsp+48h] [rbp-38h] BYREF
+  DWORD flOldProtect[2]; // [rsp+290h] [rbp+210h] BYREF
+  volatile signed __int64 *v136; // [rsp+298h] [rbp+218h]
+  __int64 v137; // [rsp+2A0h] [rbp+220h]
+  _BYTE Src[584]; // [rsp+2A8h] [rbp+228h] BYREF
+  _BYTE v139[256]; // [rsp+4F0h] [rbp+470h] BYREF
+  __int64 v140; // [rsp+5F0h] [rbp+570h]
+  __int64 v141; // [rsp+5F8h] [rbp+578h]
+  _OWORD v142[28]; // [rsp+600h] [rbp+580h] BYREF
+  unsigned __int64 v143; // [rsp+7C0h] [rbp+740h]
+  int v144; // [rsp+7C8h] [rbp+748h]
+  volatile signed __int64 *v145; // [rsp+7D8h] [rbp+758h] BYREF
+  __int64 (__fastcall *P2Home)(); // [rsp+7E0h] [rbp+760h] BYREF
+  int P3Home; // [rsp+7E8h] [rbp+768h]
+  _BYTE v148[596]; // [rsp+7ECh] [rbp+76Ch] BYREF
+  _BYTE SystemInfo[992]; // [rsp+A40h] [rbp+9C0h] BYREF
+  CONTEXT Buffer; // [rsp+E20h] [rbp+DA0h] BYREF
+  _OWORD v151[2]; // [rsp+12F0h] [rbp+1270h] BYREF
+  __int64 v152; // [rsp+1310h] [rbp+1290h] BYREF
+  __int64 v153; // [rsp+1318h] [rbp+1298h]
+  __int64 v154; // [rsp+1330h] [rbp+12B0h] BYREF
+  __int64 v155; // [rsp+1338h] [rbp+12B8h]
+  char v156; // [rsp+134Fh] [rbp+12CFh]
+  __int128 v157; // [rsp+1350h] [rbp+12D0h] BYREF
+  __int64 v158; // [rsp+1360h] [rbp+12E0h]
+  int v159; // [rsp+1368h] [rbp+12E8h]
+  __int16 v160; // [rsp+136Ch] [rbp+12ECh]
+  __int64 v161; // [rsp+1370h] [rbp+12F0h] BYREF
+  __int64 v162; // [rsp+1378h] [rbp+12F8h]
+  __int64 v163; // [rsp+1390h] [rbp+1310h]
+  HANDLE hObject[2]; // [rsp+1398h] [rbp+1318h] BYREF
+  __int128 v165; // [rsp+13A8h] [rbp+1328h]
+  __int64 v166; // [rsp+13B8h] [rbp+1338h] BYREF
+  int v167; // [rsp+13C0h] [rbp+1340h]
+  unsigned __int64 v168; // [rsp+13C8h] [rbp+1348h]
+  __int64 v169; // [rsp+13D0h] [rbp+1350h]
+  __int64 v170; // [rsp+13D8h] [rbp+1358h]
+  DWORD64 v171; // [rsp+13E0h] [rbp+1360h]
+  _QWORD *v172; // [rsp+13E8h] [rbp+1368h]
+  HANDLE v173; // [rsp+13F0h] [rbp+1370h] BYREF
+  HANDLE v174; // [rsp+13F8h] [rbp+1378h] BYREF
+  DWORD64 v175; // [rsp+1400h] [rbp+1380h]
+  DWORD64 v176; // [rsp+1408h] [rbp+1388h]
+  DWORD64 v177; // [rsp+1410h] [rbp+1390h]
+  __int64 v178; // [rsp+1418h] [rbp+1398h]
+  __int64 v179; // [rsp+1420h] [rbp+13A0h]
+  _QWORD *v180; // [rsp+1428h] [rbp+13A8h]
+  char v181; // [rsp+1434h] [rbp+13B4h] BYREF
+  char v182; // [rsp+1435h] [rbp+13B5h]
+  char v183; // [rsp+1436h] [rbp+13B6h]
+  char v184; // [rsp+1437h] [rbp+13B7h]
+  __int64 v185; // [rsp+1438h] [rbp+13B8h]
+
+  v185 = -2LL;
+  sub_14001C250(&Buffer);
+  LODWORD(Buffer.P1Home) = 64;
+  if ( !GlobalMemoryStatusEx((LPMEMORYSTATUSEX)&Buffer) )
+  {
+    v0 = sub_14001C790();
+    if ( v1 )
+    {
+      *(_QWORD *)SystemInfo = v0;
+      *(_DWORD *)&SystemInfo[8] = v1;
+      sub_140043830(
+        (unsigned int)&unk_140044A70,
+        1,
+        (unsigned int)SystemInfo,
+        (unsigned int)&off_1400448D0,
+        (__int64)&off_140044BC0);
+    }
+  }
+  if ( Buffer.P2Home <= 0x80000000 )
+  {
+    *(_QWORD *)SystemInfo = &off_140044A78;
+    *(_QWORD *)&SystemInfo[8] = 1LL;
+    *(_QWORD *)&SystemInfo[16] = &off_140044830;
+    *(_OWORD *)&SystemInfo[24] = 0LL;
+    sub_140043450(SystemInfo, &off_140044BD8);
+  }
+  sub_140013080(SystemInfo);
+  GetSystemInfo((LPSYSTEM_INFO)SystemInfo);
+  if ( *(_DWORD *)&SystemInfo[32] <= 1u )
+  {
+    Buffer.P1Home = (DWORD64)&off_140044A78;
+    Buffer.P2Home = 1LL;
+    Buffer.P3Home = (DWORD64)&off_140044830;
+    *(_OWORD *)&Buffer.P4Home = 0LL;
+    sub_140043450(&Buffer, &off_140044BA8);
+  }
+  sub_140008950(&Buffer);
+  sub_140008BA0(&Buffer);
+  if ( *(_QWORD *)(sub_140008BE0(&Buffer) + 24) <= 0x32uLL )
+  {
+    *(_QWORD *)SystemInfo = &off_140044A78;
+    *(_QWORD *)&SystemInfo[8] = 1LL;
+    *(_QWORD *)&SystemInfo[16] = &off_140044830;
+    *(_OWORD *)&SystemInfo[24] = 0LL;
+    sub_140043450(SystemInfo, &off_140044BF0);
+  }
+  sub_1400012E0(&Buffer);
+  v2 = IsDebuggerPresent();
+  if ( (unsigned __int8)sub_14001C270(v2) )
+  {
+    Buffer.P1Home = (DWORD64)&off_140044A78;
+    Buffer.P2Home = 1LL;
+    Buffer.P3Home = (DWORD64)&off_140044830;
+    *(_OWORD *)&Buffer.P4Home = 0LL;
+    sub_140043450(&Buffer, &off_140044A88);
+  }
+  if ( NtCurrentTeb()->ProcessEnvironmentBlock->BeingDebugged == 1 )
+  {
+    Buffer.P1Home = (DWORD64)&off_140044A78;
+    Buffer.P2Home = 1LL;
+    Buffer.P3Home = (DWORD64)&off_140044830;
+    *(_OWORD *)&Buffer.P4Home = 0LL;
+    sub_140043450(&Buffer, &off_140044AA0);
+  }
+  v3 = (_QWORD *)sub_140006AD0(208LL, 8LL);
+  if ( !v3 )
+    sub_140043370(8LL, 208LL);
+  *v3 = aOllydbgExe;
+  v3[1] = 11LL;
+  v3[2] = aWindbgExe;
+  v3[3] = 10LL;
+  v3[4] = aX64dbgExe;
+  v3[5] = 10LL;
+  v3[6] = aIdaExe;
+  v3[7] = 7LL;
+  v3[8] = aIda64Exe;
+  v3[9] = 9LL;
+  v3[10] = aIdaqExe;
+  v3[11] = 8LL;
+  v3[12] = aProcmonExe;
+  v3[13] = 11LL;
+  v3[14] = aProcesshackerE;
+  v3[15] = 17LL;
+  v3[16] = aProcexpExe;
+  v3[17] = 11LL;
+  v3[18] = aProcdumpExe;
+  v3[19] = 12LL;
+  v3[20] = aVsdebugconsole;
+  v3[21] = 18LL;
+  v3[22] = aMsvsmonExe;
+  v3[23] = 11LL;
+  v3[24] = aX32dbgExe;
+  v180 = v3;
+  v3[25] = 10LL;
+  sub_140008950(&Buffer);
+  sub_140008BA0(&Buffer);
+  v4 = sub_140008BE0(&Buffer);
+  v5 = *(const __m128i **)v4;
+  v179 = *(_QWORD *)(v4 + 24);
+  v6 = ~_mm_movemask_epi8(_mm_load_si128(v5));
+  v7 = v5 + 1;
+  while ( v179-- != 0 )
+  {
+    if ( !(_WORD)v6 )
+    {
+      do
+      {
+        v9 = _mm_movemask_epi8(_mm_load_si128(v7));
+        v5 -= 352;
+        ++v7;
+      }
+      while ( v9 == 0xFFFF );
+      v6 = ~v9;
+    }
+    _RAX = v6;
+    v6 &= v6 - 1;
+    __asm { tzcnt   eax, eax }
+    v11 = (__int64)&v5[-22 * _RAX - 21] - 8;
+    for ( i = 0LL; ; ++i )
+    {
+      v13 = 2 * i;
+      v14 = (const void **)&v180[2 * i];
+      if ( i == 13 )
+        break;
+      v15 = (const void *)sub_140008BF0(v11);
+      if ( v16 == v180[v13 + 1] && !memcmp(v15, *v14, v16) )
+      {
+        *(_QWORD *)SystemInfo = &off_140044A78;
+        *(_QWORD *)&SystemInfo[8] = 1LL;
+        *(_QWORD *)&SystemInfo[16] = &off_140044830;
+        *(_OWORD *)&SystemInfo[24] = 0LL;
+        sub_140043450(SystemInfo, &off_140044B50);
+      }
+    }
+  }
+  sub_1400012E0(&Buffer);
+  sub_140006AE0(v180, 208LL, 8LL);
+  sub_14001C280(&Buffer);
+  Buffer.ContextFlags = 1048592;
+  CurrentThread = GetCurrentThread();
+  if ( !GetThreadContext(CurrentThread, &Buffer) )
+  {
+    v77 = sub_14001C790();
+    if ( v78 )
+    {
+      *(_QWORD *)flOldProtect = v77;
+      LODWORD(v136) = v78;
+      v145 = (volatile signed __int64 *)flOldProtect;
+      P2Home = sub_14001CC20;
+      *(_QWORD *)SystemInfo = &off_140044B88;
+      *(_QWORD *)&SystemInfo[8] = 2LL;
+      *(_QWORD *)&SystemInfo[32] = 0LL;
+      *(_QWORD *)&SystemInfo[16] = &v145;
+      *(_QWORD *)&SystemInfo[24] = 1LL;
+      sub_1400258B0(SystemInfo);
+      if ( *(_QWORD *)flOldProtect )
+        sub_1400130E0(flOldProtect);
+    }
+  }
+  if ( *(_OWORD *)&Buffer.Dr0 != 0LL || __PAIR128__(Buffer.Dr2, 0LL) != Buffer.Dr3 )
+  {
+    *(_QWORD *)SystemInfo = &off_140044A78;
+    *(_QWORD *)&SystemInfo[8] = 1LL;
+    *(_QWORD *)&SystemInfo[16] = &off_140044830;
+    *(_OWORD *)&SystemInfo[24] = 0LL;
+    sub_140043450(SystemInfo, &off_140044B68);
+  }
+  v142[0] = xmmword_140044540;
+  v142[1] = xmmword_140044550;
+  v142[2] = xmmword_140044560;
+  v142[3] = xmmword_140044570;
+  v142[4] = xmmword_140044580;
+  v142[5] = xmmword_140044590;
+  v142[6] = xmmword_1400445A0;
+  v142[7] = xmmword_1400445B0;
+  v142[8] = xmmword_1400445C0;
+  v142[9] = xmmword_1400445D0;
+  v142[10] = xmmword_1400445E0;
+  v142[11] = xmmword_1400445F0;
+  v142[12] = xmmword_140044600;
+  v142[13] = xmmword_140044610;
+  v142[14] = xmmword_140044620;
+  v142[15] = xmmword_140044630;
+  v142[16] = xmmword_140044640;
+  v142[17] = xmmword_140044650;
+  v142[18] = xmmword_140044660;
+  v142[19] = xmmword_140044670;
+  v142[20] = xmmword_140044680;
+  v142[21] = xmmword_140044690;
+  v142[22] = xmmword_1400446A0;
+  v142[23] = xmmword_1400446B0;
+  v142[24] = xmmword_1400446C0;
+  v142[25] = xmmword_1400446D0;
+  v142[26] = xmmword_1400446E0;
+  v142[27] = xmmword_1400446F0;
+  v143 = 0xD1C7A669AFE2F091uLL;
+  v144 = 644290490;
+  v157 = xmmword_140044700;
+  v18 = 1;
+  v158 = 0x7C3C7274633E6469LL;
+  v159 = 2115661413;
+  v160 = 31844;
+  for ( j = 1LL; j != 31; j += 2LL )
+  {
+    *(&v156 + j) = (v18 + *(&v156 + j)) ^ 0x17;
+    *((_BYTE *)&v157 + j) ^= 0x17u;
+    ++v18;
+  }
+  *(_OWORD *)&Buffer.P1Home = xmmword_140044710;
+  *(_OWORD *)&Buffer.P3Home = xmmword_140044720;
+  qmemcpy(&Buffer.P5Home, " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmno", 80);
+  *(_OWORD *)&Buffer.Dr7 = xmmword_140044780;
+  *(_OWORD *)&Buffer.Rcx = xmmword_140044790;
+  *(_OWORD *)&Buffer.Rbx = xmmword_1400447A0;
+  *(_OWORD *)&Buffer.Rbp = xmmword_1400447B0;
+  *(_OWORD *)&Buffer.Rdi = xmmword_1400447C0;
+  *(_OWORD *)&Buffer.R9 = xmmword_1400447D0;
+  *(_OWORD *)&Buffer.R11 = xmmword_1400447E0;
+  *(_OWORD *)&Buffer.R13 = xmmword_1400447F0;
+  *(__m128i *)&Buffer.R15 = _mm_load_si128((const __m128i *)&xmmword_140044800);
+  v20 = &v157;
+  v21 = 0;
+  for ( k = 0LL; k != 256; ++k )
+  {
+    v23 = *((_BYTE *)&Buffer.P1Home + k);
+    v21 += *((_BYTE *)v20 - 30 * (k / 0x1E)) + v23;
+    *((_BYTE *)&Buffer.P1Home + k) = *((_BYTE *)&Buffer.P1Home + v21);
+    *((_BYTE *)&Buffer.P1Home + v21) = v23;
+    v20 = (__int128 *)((char *)v20 + 1);
+  }
+  memcpy(v139, &Buffer, sizeof(v139));
+  v24 = 0LL;
+  LOBYTE(v25) = 0;
+  v26 = 0;
+  do
+  {
+    v25 = (unsigned __int8)(v25 + 1);
+    v27 = v139[v25];
+    v26 += v27;
+    v139[v25] = v139[v26];
+    v139[v26] = v27;
+    *((_BYTE *)v142 + v24++) ^= v139[(unsigned __int8)(v139[v25] + v27)];
+  }
+  while ( v24 != 460 );
+  v140 = v25;
+  v141 = v26;
+  sub_140008950(&Buffer);
+  sub_140008BA0(&Buffer);
+  _RAX = sub_140008BE0(&Buffer);
+  v29 = *(const __m128i **)_RAX;
+  v30 = *(_QWORD *)(_RAX + 24);
+  _R12D = ~_mm_movemask_epi8(_mm_load_si128((const __m128i *)*(_QWORD *)_RAX));
+  v32 = (const __m128i *)(*(_QWORD *)_RAX + 16LL);
+  while ( 1 )
+  {
+    if ( !v30 )
+    {
+      v40 = (_BYTE *)sub_140005E40(1LL, 0LL);
+      v42 = v128;
+      *v40 = 32;
+      goto LABEL_141;
+    }
+    if ( !(_WORD)_R12D )
+    {
+      do
+      {
+        v33 = _mm_movemask_epi8(_mm_load_si128(v32));
+        v29 -= 352;
+        ++v32;
+      }
+      while ( v33 == 0xFFFF );
+      _R12D = ~v33;
+    }
+    __asm { tzcnt   eax, r12d }
+    v34 = -22 * _RAX;
+    _RAX = sub_140008BF0((char *)&v29[-22 * _RAX - 21] - 8);
+    _R12D &= _R12D - 1;
+    --v30;
+    if ( v35 == 11 )
+    {
+      _RAX = *(_QWORD *)_RAX ^ 0x2E64617065746F6ELL | *(_QWORD *)(_RAX + 3) ^ 0x6578652E64617065LL;
+      if ( !_RAX )
+        break;
+    }
+  }
+  v36 = sub_140008FB0(v29[v34 - 22].m128i_i64[0]);
+  sub_140013050(0LL);
+  v145 = (volatile signed __int64 *)OpenProcess(0x1FFFFFu, v37, v36);
+  if ( (unsigned __int8)sub_14001C2A0(&v145) )
+  {
+    v38 = (volatile signed __int64 *)sub_14001C790();
+    *(_QWORD *)SystemInfo = v38;
+    *(_DWORD *)&SystemInfo[8] = v39;
+    if ( v39 )
+    {
+      v40 = (_BYTE *)sub_140005E40(1LL, 0LL);
+      v42 = v41;
+      *v40 = 32;
+      if ( *(_DWORD *)&SystemInfo[8] && *(_QWORD *)SystemInfo )
+        sub_1400130E0(SystemInfo);
+LABEL_141:
+      sub_1400012E0(&Buffer);
+      *(_QWORD *)SystemInfo = v40;
+      *(_QWORD *)&SystemInfo[8] = v42;
+      *(_QWORD *)&SystemInfo[16] = 1LL;
+      v145 = (volatile signed __int64 *)SystemInfo;
+      P2Home = sub_1400017D0;
+      Buffer.P1Home = (DWORD64)&off_140044CE0;
+      Buffer.P2Home = 1LL;
+      Buffer.P5Home = 0LL;
+      Buffer.P3Home = (DWORD64)&v145;
+      Buffer.P4Home = 1LL;
+      sub_140043450(&Buffer, &off_140044CF0);
+    }
+  }
+  else
+  {
+    v38 = v145;
+  }
+  sub_1400012E0(&Buffer);
+  v43 = (const CHAR *)sub_140008FB0("user32");
+  Buffer.P1Home = (DWORD64)LoadLibraryA(v43);
+  if ( (unsigned __int8)unknown_libname_1(&Buffer) )
+  {
+    v44 = (volatile signed __int64 *)sub_14001C790();
+    P1Home = (HMODULE)v44;
+    if ( v45 )
+    {
+      v145 = v44;
+      LODWORD(P2Home) = v45;
+      *(_QWORD *)SystemInfo = &v145;
+      *(_QWORD *)&SystemInfo[8] = sub_14001CC20;
+      Buffer.P1Home = (DWORD64)&off_140044CE0;
+      Buffer.P2Home = 1LL;
+      Buffer.P5Home = 0LL;
+      Buffer.P3Home = (DWORD64)SystemInfo;
+      Buffer.P4Home = 1LL;
+      sub_140043450(&Buffer, &off_140044D08);
+    }
+  }
+  else
+  {
+    P1Home = (HMODULE)Buffer.P1Home;
+  }
+  v47 = (const CHAR *)sub_140008FB0("MessageBoxA");
+  ProcAddress = GetProcAddress(P1Home, v47);
+  if ( !ProcAddress )
+  {
+    Buffer.P1Home = (DWORD64)&off_140044A78;
+    Buffer.P2Home = 1LL;
+    Buffer.P3Home = (DWORD64)&off_140044830;
+    *(_OWORD *)&Buffer.P4Home = 0LL;
+    sub_140043450(&Buffer, &off_140044D20);
+  }
+  v49 = ProcAddress;
+  flOldProtect[0] = 0;
+  v50 = flOldProtect;
+  if ( !VirtualProtectEx((HANDLE)v38, ProcAddress, 0x1CCuLL, 4u, flOldProtect) )
+  {
+    v51 = (volatile signed __int64 *)sub_14001C790();
+    if ( v52 )
+    {
+      v145 = v51;
+      LODWORD(P2Home) = v52;
+      *(_QWORD *)SystemInfo = &v145;
+      *(_QWORD *)&SystemInfo[8] = sub_14001CC20;
+      Buffer.P1Home = (DWORD64)&off_140044CE0;
+      Buffer.P2Home = 1LL;
+      Buffer.P5Home = 0LL;
+      Buffer.P3Home = (DWORD64)SystemInfo;
+      Buffer.P4Home = 1LL;
+      sub_140043450(&Buffer, &off_140044D38);
+    }
+  }
+  if ( !WriteProcessMemory((HANDLE)v38, v49, v142, 0x1CCuLL, 0LL) )
+  {
+    v53 = (volatile signed __int64 *)sub_14001C790();
+    if ( v54 )
+    {
+      v145 = v53;
+      LODWORD(P2Home) = v54;
+      *(_QWORD *)SystemInfo = &v145;
+      *(_QWORD *)&SystemInfo[8] = sub_14001CC20;
+      Buffer.P1Home = (DWORD64)&off_140044CE0;
+      Buffer.P2Home = 1LL;
+      Buffer.P5Home = 0LL;
+      Buffer.P3Home = (DWORD64)SystemInfo;
+      Buffer.P4Home = 1LL;
+      sub_140043450(&Buffer, &off_140044D50);
+    }
+  }
+  if ( !VirtualProtectEx((HANDLE)v38, v49, 0x1CCuLL, 0x40u, flOldProtect) )
+  {
+    v55 = (volatile signed __int64 *)sub_14001C790();
+    if ( v56 )
+    {
+      v145 = v55;
+      LODWORD(P2Home) = v56;
+      *(_QWORD *)SystemInfo = &v145;
+      *(_QWORD *)&SystemInfo[8] = sub_14001CC20;
+      Buffer.P1Home = (DWORD64)&off_140044CE0;
+      Buffer.P2Home = 1LL;
+      Buffer.P5Home = 0LL;
+      Buffer.P3Home = (DWORD64)SystemInfo;
+      Buffer.P4Home = 1LL;
+      sub_140043450(&Buffer, &off_140044D68);
+    }
+  }
+  Buffer.P1Home = (DWORD64)CreateRemoteThread((HANDLE)v38, 0LL, 0LL, (LPTHREAD_START_ROUTINE)v49, 0LL, 0, 0LL);
+  if ( (unsigned __int8)sub_14001C2A0(&Buffer) )
+  {
+    v57 = (volatile signed __int64 *)sub_14001C790();
+    if ( v58 )
+    {
+      v145 = v57;
+      LODWORD(P2Home) = v58;
+      *(_QWORD *)SystemInfo = &v145;
+      *(_QWORD *)&SystemInfo[8] = sub_14001CC20;
+      Buffer.P1Home = (DWORD64)&off_140044CE0;
+      Buffer.P2Home = 1LL;
+      Buffer.P5Home = 0LL;
+      Buffer.P3Home = (DWORD64)SystemInfo;
+      Buffer.P4Home = 1LL;
+      sub_140043450(&Buffer, &off_140044D80);
+    }
+  }
+  sub_140023940(SystemInfo, aUsername, 8LL);
+  if ( SystemInfo[24] != 3 )
+  {
+    v131 = _mm_loadu_si128((const __m128i *)SystemInfo);
+    *(_OWORD *)&Buffer.P3Home = *(_OWORD *)&SystemInfo[16];
+    *(__m128i *)&Buffer.P1Home = v131;
+    sub_140043830(
+      (unsigned int)&unk_140044A70,
+      1,
+      (unsigned int)&Buffer,
+      (unsigned int)&off_140044890,
+      (__int64)&off_140044C28);
+  }
+  v163 = *(_QWORD *)&SystemInfo[8];
+  v170 = *(_QWORD *)SystemInfo;
+  sub_140029150(&Buffer, "C:\\UsersDownloadsDesktopknight.txt", 8LL);
+  v59 = sub_14002F040(&Buffer);
+  sub_140029150(&v154, v59, v60);
+  if ( Buffer.P2Home )
+    sub_140006AE0(Buffer.P1Home, Buffer.P2Home, 1LL);
+  sub_14002F280(&Buffer, "C:\\UsersDownloadsDesktopknight.txt", 8LL);
+  v61 = _mm_loadu_si128((const __m128i *)&Buffer);
+  *(_OWORD *)&SystemInfo[16] = *(_OWORD *)&Buffer.P3Home;
+  *(__m128i *)SystemInfo = v61;
+  v62 = sub_14002F040(SystemInfo);
+  sub_140029150(&Buffer, v62, v63);
+  v64 = sub_14002F040(&Buffer);
+  sub_140029150(&v145, v64, v65);
+  v66 = sub_14002F040(&v145);
+  sub_140029150(&v152, v66, v67);
+  if ( P2Home )
+    sub_140006AE0(v145, P2Home, 1LL);
+  if ( Buffer.P2Home )
+    sub_140006AE0(Buffer.P1Home, Buffer.P2Home, 1LL);
+  if ( *(_QWORD *)&SystemInfo[8] )
+    sub_140006AE0(*(_QWORD *)SystemInfo, *(_QWORD *)&SystemInfo[8], 1LL);
+  sub_140023F40(&Buffer);
+  LOBYTE(v68) = 1;
+  v69 = sub_140023F70(&Buffer, v68);
+  v70 = sub_14002F040(&v152);
+  if ( sub_140023FB0(v69, v70, v71) )
+  {
+    Buffer.P1Home = (DWORD64)v72;
+    sub_140043830(
+      (unsigned int)&unk_140044A70,
+      1,
+      (unsigned int)&Buffer,
+      (unsigned int)&off_140044870,
+      (__int64)&off_140044C68);
+  }
+  v174 = v72;
+  sub_140023EA0(&Buffer, &v174);
+  if ( LODWORD(Buffer.P1Home) == 2 )
+  {
+    *(_QWORD *)SystemInfo = Buffer.P2Home;
+    sub_140043830(
+      (unsigned int)&off_140044830,
+      0,
+      (unsigned int)SystemInfo,
+      (unsigned int)&off_140044870,
+      (__int64)&off_140044C80);
+  }
+  *(_QWORD *)&SystemInfo[64] = *(_QWORD *)&Buffer.SegGs;
+  v73 = _mm_loadu_si128((const __m128i *)&Buffer);
+  *(_OWORD *)&SystemInfo[48] = *(_OWORD *)&Buffer.ContextFlags;
+  *(_OWORD *)&SystemInfo[32] = *(_OWORD *)&Buffer.P5Home;
+  *(_OWORD *)&SystemInfo[16] = *(_OWORD *)&Buffer.P3Home;
+  *(__m128i *)SystemInfo = v73;
+  v74 = sub_140023FD0(SystemInfo);
+  v75 = v74;
+  if ( v74 )
+  {
+    if ( v74 < 0 )
+      sub_140039180();
+    v76 = sub_140006B00(v74, 1LL);
+    if ( !v76 )
+      sub_140043370(1LL, v75);
+  }
+  else
+  {
+    v76 = 1LL;
+  }
+  v169 = v76;
+  v168 = v75;
+  v79 = sub_140004790(&v174, v76, v75);
+  if ( v79 )
+  {
+    Buffer.P1Home = v79;
+    sub_140043830(
+      (unsigned int)&off_140044830,
+      0,
+      (unsigned int)&Buffer,
+      (unsigned int)&off_140044870,
+      (__int64)&off_140044C98);
+  }
+  v167 = 0;
+  v166 = 0LL;
+  if ( v168 <= 0xB )
+    sub_140043950(12LL, v168, &off_140044CB0);
+  v167 = *(_DWORD *)(v169 + 8);
+  v166 = *(_QWORD *)v169;
+  v151[0] = xmmword_140044810;
+  v151[1] = _mm_load_si128((const __m128i *)&xmmword_140044820);
+  v80 = &v166;
+  for ( m = 0LL; m != 32; ++m )
+  {
+    *((_BYTE *)v151 + m) = *((_BYTE *)v80 - 3 * ((m / 3) & 0xFFFFFFFFFFFFFFFCuLL)) ^ (*((_BYTE *)v151 + m)
+                                                                                    + (~(_BYTE)m | 0xFE)) ^ 0x33;
+    v80 = (__int64 *)((char *)v80 + 1);
+  }
+  v82 = sub_14002F040(&v154);
+  sub_14002DD30(&Buffer, v82, v83);
+  v84 = Buffer.P1Home;
+  if ( LODWORD(Buffer.P3Home) == 2 )
+  {
+    v132 = (DWORD64 *)sub_140006AD0(8LL, 8LL);
+    if ( !v132 )
+      sub_140043370(8LL, 8LL);
+    v130 = (DWORD64)v132;
+    *v132 = v84;
+    goto LABEL_180;
+  }
+  memcpy(v148, (char *)&Buffer.P3Home + 4, sizeof(v148));
+  v145 = (volatile signed __int64 *)Buffer.P1Home;
+  P2Home = (__int64 (__fastcall *)())Buffer.P2Home;
+  P3Home = Buffer.P3Home;
+  v85 = &v161;
+  while ( 1 )
+  {
+    sub_140023FE0(flOldProtect, &v145);
+    if ( !*(_QWORD *)flOldProtect )
+      break;
+    v86 = (DWORD64)v50;
+    if ( v136 )
+    {
+      memcpy(v134, Src, sizeof(v134));
+      v133[0] = v136;
+      v133[1] = (volatile signed __int64 *)v137;
+      sub_140024070(v85, v133);
+      v87 = v85;
+      v88 = sub_14002F040(v85);
+      if ( !(unsigned __int8)sub_140029330(v88) )
+        goto LABEL_120;
+      v89 = sub_14002F040(v85);
+      v91 = v90;
+      v92 = sub_1400290A0(v89);
+      if ( v92
+        && (sub_140023E80(&Buffer, v92, v93), !Buffer.P1Home)
+        && Buffer.P3Home == 10
+        && !(*(_QWORD *)Buffer.P2Home ^ 0x346D746867316E6BLL | *(unsigned __int16 *)(Buffer.P2Home + 8) ^ 0x3372LL) )
+      {
+        Buffer.P1Home = (DWORD64)&off_1400449E8;
+        Buffer.P2Home = 1LL;
+        Buffer.P3Home = (DWORD64)&off_140044830;
+        *(_OWORD *)&Buffer.P4Home = 0LL;
+        sub_1400258B0(&Buffer);
+      }
+      else
+      {
+        sub_140023F40(&Buffer);
+        LOBYTE(v94) = 1;
+        v95 = sub_140023F70(&Buffer, v94);
+        v96 = sub_140023FB0(v95, v89, v91);
+        v98 = (__int64)v97;
+        if ( v96 )
+          goto LABEL_149;
+        v173 = v97;
+        v99 = sub_140028FF0(v89, v91);
+        if ( !v99 )
+          sub_140043500(aCalledOptionUn, 43LL, &off_140044928);
+        sub_14002F280(hObject, v99, v100);
+        v184 = 1;
+        v102 = sub_1400290A0(v89);
+        if ( v102 )
+        {
+          v103 = v101;
+          v184 = 1;
+          sub_14002F050(hObject, &unk_140044940, 1LL);
+          v184 = 1;
+          sub_14002F050(hObject, v102, v103);
+        }
+        v184 = 1;
+        sub_14002F050(hObject, &unk_140044940, 1LL);
+        v184 = 1;
+        sub_14002F050(hObject, aKn1ghtm4r3, 10LL);
+        v184 = 1;
+        v104 = sub_140028970(v89, v91);
+        if ( !v104 )
+        {
+          v184 = 1;
+          sub_140043500(aCalledOptionUn, 43LL, &off_140044948);
+        }
+        v184 = 1;
+        sub_14002F280(&Buffer, v104, v105);
+        *(_OWORD *)&SystemInfo[16] = *(_OWORD *)&Buffer.P3Home;
+        *(_OWORD *)SystemInfo = *(_OWORD *)&Buffer.P1Home;
+        v106 = _mm_loadu_si128((const __m128i *)hObject);
+        *(_OWORD *)&Buffer.P3Home = v165;
+        *(__m128i *)&Buffer.P1Home = v106;
+        v107 = sub_14002F040(&Buffer);
+        sub_140027CF0(SystemInfo, v107, v108);
+        if ( Buffer.P2Home )
+          sub_140006AE0(Buffer.P1Home, Buffer.P2Home, 1LL);
+        si128 = _mm_load_si128((const __m128i *)SystemInfo);
+        *(_OWORD *)&Buffer.P3Home = *(_OWORD *)&SystemInfo[16];
+        *(__m128i *)&Buffer.P1Home = si128;
+        v110 = sub_140005B40(&Buffer);
+        v112 = v111;
+        if ( v110 )
+        {
+          Buffer.P1Home = (DWORD64)v111;
+          sub_140043830(
+            (unsigned int)&off_140044830,
+            0,
+            (unsigned int)&Buffer,
+            (unsigned int)&off_140044870,
+            (__int64)&off_140044970);
+        }
+        hObject[0] = v111;
+        sub_140023EA0(&Buffer, &v173);
+        v98 = Buffer.P2Home;
+        if ( Buffer.P1Home == 2 )
+          goto LABEL_148;
+        *(_QWORD *)&SystemInfo[64] = *(_QWORD *)&Buffer.SegGs;
+        v113 = _mm_loadu_si128((const __m128i *)&Buffer.P3Home);
+        *(_OWORD *)&SystemInfo[48] = *(_OWORD *)&Buffer.ContextFlags;
+        *(_OWORD *)&SystemInfo[32] = *(_OWORD *)&Buffer.P5Home;
+        *(__m128i *)&SystemInfo[16] = v113;
+        *(_QWORD *)SystemInfo = Buffer.P1Home;
+        *(_QWORD *)&SystemInfo[8] = Buffer.P2Home;
+        v114 = sub_140023FD0(SystemInfo);
+        v115 = v114;
+        if ( v114 )
+        {
+          if ( v114 < 0 )
+            sub_140039180();
+          v116 = sub_140006B00(v114, 1LL);
+          if ( !v116 )
+            sub_140043370(1LL, v115);
+        }
+        else
+        {
+          v116 = 1LL;
+        }
+        v172 = v180;
+        v171 = v86;
+        v182 = 0;
+        v178 = v116;
+        v179 = v115;
+        v98 = sub_140004790(&v173, v116, v115);
+        if ( v98 )
+        {
+          if ( v179 )
+            sub_140006AE0(v178, v179, 1LL);
+LABEL_148:
+          CloseHandle(v112);
+          CloseHandle(v173);
+LABEL_149:
+          Buffer.P1Home = v98;
+          v129 = (__int64 *)sub_140006AD0(8LL, 8LL);
+          if ( !v129 )
+            sub_140043370(8LL, 8LL);
+LABEL_155:
+          v130 = (DWORD64)v129;
+          *v129 = v98;
+          if ( v162 )
+            sub_140006AE0(v161, v162, 1LL);
+          if ( !_InterlockedDecrement64(v133[0]) )
+            sub_140006760(v133);
+          sub_14002D860(&P2Home);
+          if ( !_InterlockedDecrement64(v145) )
+            sub_140006760(&v145);
+LABEL_180:
+          Buffer.P1Home = v130;
+          Buffer.P2Home = (DWORD64)&off_140044A18;
+          sub_140043830(
+            (unsigned int)&off_140044830,
+            0,
+            (unsigned int)&Buffer,
+            (unsigned int)&off_140044850,
+            (__int64)&off_140044CC8);
+        }
+        v172 = v180;
+        v171 = v86;
+        v182 = 0;
+        sub_140005EB0(&Buffer, v151, 32LL);
+        if ( LOBYTE(Buffer.P1Home) )
+        {
+          v172 = v180;
+          v171 = v86;
+          v182 = 0;
+          sub_140043830(
+            (unsigned int)&off_140044830,
+            0,
+            (unsigned int)&v181,
+            (unsigned int)&off_140044830,
+            (__int64)&off_140044988);
+        }
+        memcpy(SystemInfo, &Buffer.P3Home, sizeof(SystemInfo));
+        v177 = (DWORD64)v180;
+        v176 = v86;
+        v183 = 0;
+        sub_1400060E0((unsigned int)&Buffer, (unsigned int)SystemInfo, (unsigned int)&v166, v178, v179);
+        v119 = Buffer.P1Home;
+        if ( !Buffer.P1Home )
+        {
+          v177 = (DWORD64)v180;
+          v176 = v86;
+          v183 = 0;
+          sub_140043830(
+            (unsigned int)&off_140044830,
+            0,
+            (unsigned int)&v181,
+            (unsigned int)&off_1400448B0,
+            (__int64)&off_1400449A0);
+        }
+        v50 = (_QWORD *)Buffer.P2Home;
+        v177 = Buffer.P1Home;
+        v176 = Buffer.P2Home;
+        v183 = 1;
+        v120 = sub_140005C00(hObject, Buffer.P1Home, Buffer.P3Home);
+        if ( v120 )
+        {
+          v175 = v119;
+          v180 = v50;
+          Buffer.P1Home = v120;
+          sub_140043830(
+            (unsigned int)&off_140044830,
+            0,
+            (unsigned int)&Buffer,
+            (unsigned int)&off_140044870,
+            (__int64)&off_1400449B8);
+        }
+        v121 = v179;
+        if ( v50 )
+          sub_140006AE0(v119, v50, 1LL);
+        if ( v121 )
+          sub_140006AE0(v178, v121, 1LL);
+        CloseHandle(hObject[0]);
+        CloseHandle(v173);
+        v180 = (_QWORD *)v119;
+      }
+      v122 = sub_14002F040(v87);
+      v123 = sub_1400290A0(v122);
+      if ( v123
+        && (sub_140023E80(&Buffer, v123, v124), !Buffer.P1Home)
+        && Buffer.P3Home == 10
+        && !(*(_QWORD *)Buffer.P2Home ^ 0x346D746867316E6BLL | *(unsigned __int16 *)(Buffer.P2Home + 8) ^ 0x3372LL) )
+      {
+        if ( v162 )
+          sub_140006AE0(v161, v162, 1LL);
+        if ( !_InterlockedDecrement64(v133[0]) )
+          sub_140006760(v133);
+        v85 = v87;
+      }
+      else
+      {
+        v125 = sub_14002F040(v87);
+        v126 = sub_14002E210(v125);
+        v98 = v126;
+        v85 = v87;
+        if ( v126 )
+        {
+          Buffer.P1Home = v126;
+          v129 = (__int64 *)sub_140006AD0(8LL, 8LL);
+          if ( !v129 )
+            sub_140043370(8LL, 8LL);
+          goto LABEL_155;
+        }
+LABEL_120:
+        if ( v162 )
+          sub_140006AE0(v161, v162, 1LL);
+        if ( !_InterlockedDecrement64(v133[0]) )
+          sub_140006760(v133);
+      }
+    }
+    else if ( (unsigned __int64)(v137 & 3) - 2 >= 2 && (v137 & 3) != 0 )
+    {
+      v179 = v137 - 1;
+      v117 = *(void (***)(void))(v137 + 7);
+      v175 = *(_QWORD *)(v137 - 1);
+      v178 = (__int64)v117;
+      (*v117)();
+      v118 = *(_QWORD *)(v178 + 8);
+      if ( v118 )
+        sub_140006AE0(v175, v118, *(_QWORD *)(v178 + 16));
+      sub_140006AE0(v179, 24LL, 8LL);
+    }
+  }
+  sub_14002D860(&P2Home);
+  if ( !_InterlockedDecrement64(v145) )
+    sub_140006760(&v145);
+  sub_140006AE0(v169, v168, 1LL);
+  result = CloseHandle(v174);
+  if ( v153 )
+    result = sub_140006AE0(v152, v153, 1LL);
+  if ( v155 )
+    result = sub_140006AE0(v154, v155, 1LL);
+  if ( v163 )
+    return sub_140006AE0(v170, v163, 1LL);
+  return result;
+}
+```
+1.  Phân tích hàm thực chi chính sub_140001810, tóm tắt luồng của nó như sau
+2.  Kiểm tra môi trường (6 điều kiện), có điều kiện xấu thì panic/thoát
+3.  Giải mã shellcode 460 byte bằng RC4 (khóa 30 byte được giải mờ tại chỗ)
+4.  Tìm notepad.exe đang chạy -> OpenProcess
+5.  Ghi đè 460 byte đầu của user32!MessageBoxA trong notepad bằng shellcode, rồi CreateRemoteThread
+6.  Đọc 12 byte đầu của Desktop\knight.txt -> IV
+7.  Dẫn xuất khóa AES-256 (một lần)
+8.  Duyệt Downloads: mã hóa từng file bằng AES-256-GCM -> <tên>.<đuôi>.kn1ghtm4r3, rồi xóa file gốc
+
+Việc chúng ta cần làm là quan tâm đến thuật toán mã hóa và hàm mã hóa của malware
+Thuật toán mã hóa: AES-256-GCM
+Malware mã hóa mỗi file bằng AES-256 chạy ở chế độ GCM, với khóa dẫn xuất từ 12 byte IV đọc từ Desktop\\knight.txt. Nhưng mà knight.txt có thể đã bị xóa , hoặc là mình khôi phục không đúng nên không có, hoăc có thể file knight.txt lấy từ máy của attacker nên chúng ta không decrypt theo hướng này được tuy nhiên điểm yếu của toàn bộ thiết kế là khóa và nonce được dùng chung cho mọi file . Do đó mọi file dùng chung một keystream: byte thứ i của mọi file bị XOR với cùng một byte KS[i]. Nếu biết plaintext của bất kỳ file nào, ta lấy được keystream
+
+Giải mã bằng keystream (known-plaintext trên nonce tái dùng)
+
+Malware mã hóa theo công thức bản mã = bản rõ XOR keystream.Ta có cả bản mã của Rufus (file .kn1ghtm4r3 trong ảnh đĩa) lẫn bản rõ của Rufus (bản chính thức tải về), nên XOR hai file này sẽ ra keystream
+```
+keystream = = rufus-3.21.exe.kn1ghtm4r3 (bỏ 16 byte thẻ cuối)  XOR  rufus-3.21.exe
+```
+Trong AES-GCM, keystream chỉ phụ thuộc vào khóa, nonce và vị trí byte, không phụ thuộc nội dung hay tên file. savenotes.exe dùng cùng một khóa và cùng một nonce cho mọi file, nên byte thứ i của file nào cũng bị XOR với cùng một byte ks.bin[i]. Vì vậy có thể dùng keystream lấy từ Rufus để gỡ lớp mã hóa của file HEIC
+Mình viết 1 script là ksdec.py để lấy keystream:
+```
+#!/usr/bin/env python3
+
+import sys
+
+GUESS = ("\r\n[.ShellClassInfo]\r\nLocalizedResourceName=@%SystemRoot%\\system32\\shell32.dll,-21798\r\n"
+         "IconResource=%SystemRoot%\\system32\\imageres.dll,-184\r\n").encode("utf-16le")
+GUESS = b"\xff\xfe" + GUESS          # BOM UTF-16LE, 282 byte
+
+if sys.argv[1] == "mk":
+    ct = open(sys.argv[2], "rb").read()
+    assert len(ct) - 16 == len(GUESS), "do dai ct-16 (%d) != plaintext doan (%d)" % (len(ct) - 16, len(GUESS))
+    ks = bytes(a ^ b for a, b in zip(ct, GUESS))
+    open(sys.argv[3], "wb").write(ks)
+    print("keystream %d byte -> %s; 32 byte dau: %s" % (len(ks), sys.argv[3], ks[:32].hex()))
+elif sys.argv[1] == "mk2":
+    ct = open(sys.argv[2], "rb").read()
+    pt = open(sys.argv[3], "rb").read()
+    if len(ct) - 16 != len(pt):
+        sys.exit("SAI DO DAI: ciphertext-16 = %d, ban goc = %d -> sai phien ban/file khac" % (len(ct) - 16, len(pt)))
+    ks = bytes(a ^ b for a, b in zip(ct, pt))
+    open(sys.argv[4], "wb").write(ks)
+    print("keystream %d byte -> %s; 32 byte dau: %s" % (len(ks), sys.argv[4], ks[:32].hex()))
+elif sys.argv[1] == "dec":
+    ks = open(sys.argv[2], "rb").read()
+    ct = open(sys.argv[3], "rb").read()
+    n = min(len(ks), max(0, len(ct) - 16))
+    pt = bytes(a ^ b for a, b in zip(ct[:n], ks[:n]))
+    open(sys.argv[4], "wb").write(pt)
+    print("giai ma %d / %d byte ciphertext. 64 byte dau:" % (n, len(ct) - 16))
+    print(pt[:64].hex()); print(pt[:64])
+```
+bash
+```
+python ksdec.py mk2 rufus-3.21.exe.kn1ghtm4r3 rufus-3.21.exe ks.bin
+```
+Mình thu được keystream là ks.bin:
+<img width="1476" height="761" alt="image" src="https://github.com/user-attachments/assets/cc6dab7b-94d6-41d5-8ab5-162c4634ac79" />
+
+Sau đó giải HEIC bằng ks.bin vừa tạo:
+bash 
+```
+python ksdec.py dec ks.bin Azr43lKn1ght.heic.kn1ghtm4r3 heic.bin
+```
+<img width="1481" height="772" alt="image" src="https://github.com/user-attachments/assets/ee165072-30fd-4a0f-bd4e-b68f3f69c015" />
+
+Giải mã xong vẫn chưa thu được flag nên mình nghĩ file đã bị hỏng , mình load vào HxD để tiếp tục xem magic bytes
+<img width="1286" height="1023" alt="image" src="https://github.com/user-attachments/assets/447507a0-a615-41c3-a8c6-53294ca94f32" />
+
+Chúng ta có thể thấy vấn đề là vì 11 trường kích thước box bị đưa về 0 và 5 tên box bị đổi chữ. Phần dữ liệu bị hỏng là có chủ ý.HEIC là ISO BMFF, cùng họ với MP4: file là chuỗi box, mỗi box có header [size 4 byte big-endian][type 4 ký tự]. size tính cả header, nên box kế tiếp bắt đầu tại đầu box này + size. Box meta là box có phiên bản (FullBox), nên sau header có thêm 4 byte version/flags, và các box con bắt đầu cách đầu meta 12 byte
+Mình sẽ viết tiếp 1 script là boxmap.py để in vị trí các chuỗi 4 ký tự. Từ đó suy ra cây box:
+```
+import sys, re
+d = open(sys.argv[1], "rb").read()
+print("kich thuoc:", len(d))
+names = [b"ftyp", b"meta", b"hdlr", b"pitm", b"iloc", b"iinf", b"infe", b"iref", b"iprp", b"ipco",
+         b"ispe", b"hvcC", b"colr", b"pixi", b"ipma", b"mdat", b"idat", b"auxC", b"irot"]
+hits = []
+for n in names:
+    for ci in (n, n.upper(), n.capitalize(), n[::-1]):
+        for m in re.finditer(re.escape(ci), d):
+            hits.append((m.start(), ci))
+for pos, ci in sorted(set(hits)):
+    print("%6d  %-5s  truoc: %s  | sau: %s" % (pos, ci.decode(), d[max(0, pos-4):pos].hex(), d[pos+4:pos+20].hex()))
+print("\n16 byte dau cua 4 phan cuoi file:", d[-64:].hex())
+```
+<img width="1475" height="755" alt="image" src="https://github.com/user-attachments/assets/3b07237e-03a1-4a77-9bf3-05ae877ba53c" />
+
+Kết quả cho thấy hdlr, pitm, iinf, iprp vẫn đúng chỗ, còn ityp, META, ILOC, MDAT sai chữ.
+Hai bảng lỗi:
+11 trường kích thước bị về 0, tại các offset 0, 28, 73, 87, 175, 294, 681, 693, 707, 721 và 735, kèm giá trị đúng và cách tính (vị trí box kế tiếp trừ vị trí box này; mdat = kích thước file − 735 = 52.346).
+5 tên bị đổi: ityp→ftyp, hiec→heic, META→meta, ILOC→iloc, MDAT→mdat
+Mình viết 1 script để vá và ghi các trường trên rồi duyệt cây box để đảm bảo kết thúc đúng EOF.
+fix_heic.py:
+```
+#!/usr/bin/env python3
+import sys, struct
+
+src, dst = sys.argv[1], sys.argv[2]
+d = bytearray(open(src, "rb").read())
+N = len(d)
+
+def u32(o): return struct.unpack_from(">I", d, o)[0]
+def put32(o, v): struct.pack_into(">I", d, o, v)
+def cc(o): return bytes(d[o:o + 4])
+
+# 1) kiem tra 4CC (chap nhan ban hong hoac ban da sua)
+expect = {4: (b"ityp", b"ftyp"), 32: (b"META", b"meta"), 44: (b"hdlr",), 77: (b"pitm",), 91: (b"ILOC", b"iloc"),
+          179: (b"iinf",), 298: (b"iprp",), 685: (b"iref",), 739: (b"MDAT", b"mdat")}
+for o, ok in expect.items():
+    if cc(o) not in ok:
+        sys.exit("4CC tai %d la %r, mong doi %r -> file khac voi boxmap, DUNG" % (o, cc(o), ok))
+if N != 53081:
+    print("CANH BAO: kich thuoc %d khac 53081" % N)
+
+# 2) ten box / brand
+d[4:8] = b"ftyp"; d[8:12] = b"heic"; d[32:36] = b"meta"; d[91:95] = b"iloc"; d[739:743] = b"mdat"
+# 3) kich thuoc box (tu cau truc da xac dinh)
+sizes = {0: 28, 28: 707, 73: 14, 87: 88, 175: 119, 294: 387, 681: 54, 735: N - 735}
+for o, v in sizes.items():
+    put32(o, v)
+# 4) cac reference trong iref: 3 box x 14 byte bat dau tai 693, 707, 721
+for o in (693, 707, 721):
+    print("iref con tai %d: size=%d type=%r" % (o, u32(o), cc(o + 4)))
+    put32(o, 14)
+
+open(dst, "wb").write(d)
+
+# 5) xac minh: duyet cay box
+def walk(o, end, depth, kind):
+    while o + 8 <= end:
+        sz = u32(o); t = cc(o + 4)
+        ok = sz >= 8 and o + sz <= end
+        print("  " * depth + "%-5s @%-6d size=%-6d %s" % (t.decode("latin-1"), o, sz, "" if ok else "<<< LOI"))
+        if not ok: return False
+        body = o + 8
+        if t == b"meta": walk(body + 4, o + sz, depth + 1, "")
+        elif t == b"iinf": walk(body + 4 + 2, o + sz, depth + 1, "")
+        elif t == b"iref": walk(body + 4, o + sz, depth + 1, "")
+        elif t in (b"iprp", b"ipco"): walk(body, o + sz, depth + 1, "")
+        o += sz
+    return o == end
+
+print("\nCay box:")
+print("Khop tong the:", walk(0, N, 0, ""))
+print("ghi", dst)
+```
+bash
+```
+python fixheic.py heic.bin fixed.heic
+```
+<img width="1158" height="812" alt="image" src="https://github.com/user-attachments/assets/8de74a8e-8762-4c0d-9359-9ed298229126" />
+Mở file đã sửa lên mình thu được flag.
+<img width="1408" height="733" alt="image" src="https://github.com/user-attachments/assets/0841170d-43dc-4dc5-9f97-7db1692b04e7" />
+
+
