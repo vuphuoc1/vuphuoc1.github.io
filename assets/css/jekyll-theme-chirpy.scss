@@ -165,3 +165,41 @@ blockquote {
 ::-webkit-scrollbar-thumb:hover {
   background: #c8102e;
 }
+
+/* ===== FONT ===== */
+
+/* tên blog + tiêu đề card: Rajdhani, nét kỹ thuật, hợp tông đỏ */
+#sidebar .site-title a,
+#post-list .card .card-title,
+.content h1, .content h2, .content h3,
+#topbar-title,
+.post-title, h1[data-toc-skip] {
+  font-family: 'Rajdhani', sans-serif;
+  letter-spacing: 0.5px;
+}
+
+#sidebar .site-title a {
+  font-weight: 700;
+  font-size: 2rem;
+}
+
+#post-list .card .card-title {
+  font-size: 1.4rem;
+  font-weight: 700;
+}
+
+/* tagline, tag, ngày, category, code: JetBrains Mono */
+#sidebar .site-subtitle,
+.post-tag,
+.post-meta,
+#sidebar .nav-link span,
+code,
+pre,
+.highlight {
+  font-family: 'JetBrains Mono', Consolas, monospace;
+}
+
+.post-tag,
+.post-meta {
+  font-size: 0.78rem;
+}
