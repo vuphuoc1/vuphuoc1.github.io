@@ -5,47 +5,75 @@
 document.addEventListener('DOMContentLoaded', function () {
   if (window.matchMedia('(hover: none)').matches) return;
 
+  // đỉnh mũi tên nằm ở (3,3) trong SVG 44x44
+  var HX = 3, HY = 3;
+  var INTERACTIVE = 'a, button, .card, .nav-link, .post-tag, summary, label, [role="button"]';
+
+  var arrow = document.createElement('div');
+  arrow.id = 'cursor-arrow';
+  arrow.innerHTML =
+    '<svg xmlns="http://www.w3.org/2000/svg" width="44" height="44" viewBox="0 0 44 44">' +
+    '<path class="tail" d="M14 15 C15 27 15 34 25 34 C34 34 37 31 40 41"/>' +
+    '<path class="head" d="M3 3 L21 8 L8 21 Z"/>' +
+    '</svg>';
+  document.body.appendChild(arrow);
+
   var glow = document.createElement('div');
   glow.id = 'cursor-glow';
   document.body.appendChild(glow);
 
-  var x = 0, y = 0, gx = 0, gy = 0, last = 0;
+  var x = -100, y = -100, gx = -100, gy = -100, last = 0, started = false;
 
-  document.addEventListener('mousemove', function (e) {
+  function show() { arrow.classList.add('show'); glow.classList.add('show'); }
+  function hide() { arrow.classList.remove('show'); glow.classList.remove('show'); }
+
+  document.addEventListener('pointermove', function (e) {
+    if (e.pointerType === 'touch') return;
     x = e.clientX;
     y = e.clientY;
 
-    // vệt đuôi: tối đa 1 chấm mỗi 40ms để không nặng
+    if (!started) {
+      started = true;
+      gx = x; gy = y;
+      document.documentElement.classList.add('has-cursor');
+    }
+    show();
+
     var now = Date.now();
     if (now - last > 40) {
       last = now;
       var t = document.createElement('div');
-      t.id = 'cursor-trail';
-      t.style.left = (x - 4) + 'px';
-      t.style.top = (y - 4) + 'px';
+      t.className = 'cursor-trail';
+      t.style.left = (x - 3) + 'px';
+      t.style.top = (y - 3) + 'px';
       document.body.appendChild(t);
       setTimeout(function () { t.remove(); }, 600);
     }
-  });
+  }, { passive: true });
 
-  // vòng sáng đuổi theo mượt
   (function loop() {
     gx += (x - gx) * 0.18;
     gy += (y - gy) * 0.18;
+    arrow.style.transform = 'translate(' + (x - HX) + 'px,' + (y - HY) + 'px)';
     glow.style.transform = 'translate(' + gx + 'px,' + gy + 'px)';
     requestAnimationFrame(loop);
   })();
 
-  // to ra khi rê vào link, nút, card
+  function setHover(on) {
+    arrow.classList.toggle('hover', on);
+    glow.classList.toggle('hover', on);
+  }
   document.addEventListener('mouseover', function (e) {
-    if (e.target.closest('a, button, .card, .nav-link, .post-tag')) {
-      glow.classList.add('hover');
-    }
+    setHover(!!(e.target.closest && e.target.closest(INTERACTIVE)));
   });
-  document.addEventListener('mouseout', function (e) {
-    if (e.target.closest('a, button, .card, .nav-link, .post-tag')) {
-      glow.classList.remove('hover');
-    }
-  });
+
+  // chuột rời cửa sổ hoặc đổi tab thì ẩn, quay lại thì hiện
+  document.documentElement.addEventListener('mouseleave', hide);
+  document.documentElement.addEventListener('mouseenter', function () { if (started) show(); });
+  document.addEventListener('visibilitychange', function () { if (document.hidden) hide(); });
+  window.addEventListener('blur', hide);
+
+  document.addEventListener('mousedown', function () { glow.style.borderColor = '#fff'; });
+  document.addEventListener('mouseup', function () { glow.style.borderColor = ''; });
 });
 </script>
