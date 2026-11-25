@@ -194,10 +194,8 @@ blockquote {
 .post-tag,
 .post-meta,
 #sidebar .nav-link span,
-code,
-pre,
-.highlight {
-  font-family: 'JetBrains Mono', Consolas, monospace;
+code, pre, .highlight, .post-tag, .post-meta, #sidebar .site-subtitle {
+  font-family: 'JetBrains Mono', Consolas, 'Courier New', monospace;
 }
 
 .post-tag,
