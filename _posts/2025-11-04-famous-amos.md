@@ -3,7 +3,7 @@ render_with_liquid: false
 title: "Famous AMOS"
 date: 2025-11-04 12:00:00 +0700
 categories: [DFIR]
-tags: [CTF]
+tags: [CTF,DFIR Labs, Malware Analyst]
 render_with_liquid: false
 ---
 
