@@ -1,0 +1,77 @@
+---
+---
+
+@use 'main
+{%- if jekyll.environment == 'production' -%}
+  .bundle
+{%- endif -%}
+';
+
+/* ===== black & red theme ===== */
+
+html[data-mode='dark'] {
+  --main-bg: #0a0a0a;
+  --sidebar-bg: #100505;
+  --card-bg: #150a0a;
+  --link-color: #ff3b3b;
+  --sidebar-active-color: #ff3b3b;
+  --heading-color: #f5f5f5;
+  --text-color: #d4d4d4;
+  --tag-hover: rgba(255, 59, 59, 0.15);
+  --btn-border-color: #3a1111;
+}
+
+/* tên blog và tiêu đề: font gần giống terminal, nhưng chữ đậm kiểu cảnh báo */
+#sidebar .site-title a {
+  color: #ff3b3b;
+  font-weight: 800;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+}
+
+#sidebar .site-subtitle {
+  color: #9a9a9a;
+  font-style: normal;
+  letter-spacing: 1px;
+}
+
+h1, h2, h3 {
+  font-weight: 700;
+}
+
+/* card bài viết: viền đỏ thẫm, hover thì sáng đỏ */
+#post-list .card {
+  border: 1px solid #3a1111;
+  border-left: 4px solid #b91c1c;
+  border-radius: 6px;
+  transition: all 0.2s ease;
+}
+
+#post-list .card:hover {
+  border-color: #ff3b3b;
+  border-left-color: #ff3b3b;
+  box-shadow: 0 0 16px rgba(255, 59, 59, 0.3);
+  transform: translateX(3px);
+}
+
+/* tag */
+.post-tag {
+  border: 1px solid #7f1d1d;
+  color: #ff6b6b;
+  border-radius: 4px;
+}
+
+.post-tag:hover {
+  background: #b91c1c;
+  color: #fff;
+}
+
+/* thanh cuộn và vùng bôi chọn */
+::selection {
+  background: #b91c1c;
+  color: #fff;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #7f1d1d;
+}
