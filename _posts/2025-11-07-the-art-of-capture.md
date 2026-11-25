@@ -3,7 +3,8 @@ render_with_liquid: false
 title: "The Art of capture"
 date: 2025-11-07 12:00:00 +0700
 categories: [HackTheBox]
-tags: [CTF]
+tags: [CTF,DFIR Labs, Malware Analyst]
+Difficulty: [Hard]
 ---
 
 Write-up: HTB — The Art of Capture
