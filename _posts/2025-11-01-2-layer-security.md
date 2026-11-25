@@ -1,3 +1,10 @@
+---
+title: "2-layer security"
+date: 2025-11-01 12:00:00 +0700
+categories: [DFIR]
+tags: [CTF]
+---
+
 Description
 The police organized a surprise attack to catch the hacker along with all the exhibits at the scene. However, the hacker had foreseen that, so he encrypted his secret file before that. He even sarcastically said "you are too stupid to decrypt my 2-layer security"
 

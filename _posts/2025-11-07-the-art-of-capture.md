@@ -1,3 +1,10 @@
+---
+title: "The Art of capture"
+date: 2025-11-07 12:00:00 +0700
+categories: [HackTheBox]
+tags: [CTF]
+---
+
 Write-up: HTB — The Art of Capture
 
 Challenge Scenario

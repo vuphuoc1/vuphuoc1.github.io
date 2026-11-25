@@ -1,3 +1,10 @@
+---
+title: "Compromised"
+date: 2025-11-02 12:00:00 +0700
+categories: [DFIR]
+tags: [CTF]
+---
+
 Tải chall về thu được 1 file pcap và mình thấy được 1 file là client.py :
 
 <img width="1167" height="815" alt="image" src="https://github.com/user-attachments/assets/ac91bee9-2248-4888-ae6a-de2617acaa98" />

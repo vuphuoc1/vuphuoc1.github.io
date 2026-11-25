@@ -1,3 +1,10 @@
+---
+title: "Famous AMOS"
+date: 2025-11-04 12:00:00 +0700
+categories: [DFIR]
+tags: [CTF]
+---
+
 Description
 Cortex XDR has been flagging alerts non-stop this Friday due to a suspicious file being downloaded by Zhu Yuan. Thankfully, my Wireshark was running so we managed to track down some of the malicious activity. It seems like the user received a malicious attachment from an unknown domain via email, and executed it in their machine.
 
