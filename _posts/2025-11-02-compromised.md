@@ -1,4 +1,5 @@
 ---
+render_with_liquid: false
 title: "Compromised"
 date: 2025-11-02 12:00:00 +0700
 categories: [DFIR]

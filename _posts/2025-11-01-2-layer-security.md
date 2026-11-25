@@ -1,4 +1,5 @@
 ---
+render_with_liquid: false
 title: "2-layer security"
 date: 2025-11-01 12:00:00 +0700
 categories: [DFIR]
