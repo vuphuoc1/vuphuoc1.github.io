@@ -1,8 +1,8 @@
 ---
-title: "2025-11-10-holmes-2025-2-The-Watchmans-Residue"
+title: "Holmes 2025 2 The Watchmans Residue Hack The Box"
 date: 2025-11-10 12:00:00 +0700
 categories: [DFIR]
-tags: [CTF]
+tags: [Sherlock]
 render_with_liquid: false
 ---
 
