@@ -3,7 +3,7 @@ render_with_liquid: false
 title: "The Art of capture"
 date: 2025-11-07 12:00:00 +0700
 categories: [HackTheBox]
-tags: [CTF,DFIR Labs, Malware Analyst]
+tags: [CTF,DFIR Labs, Malware Analyst,Memory Dump]
 Difficulty: [Hard]
 ---
 
