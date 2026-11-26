@@ -3,7 +3,7 @@ render_with_liquid: false
 title: "Covid Crime Scenario"
 date: 2025-11-03 12:00:00 +0700
 categories: [DFIR]
-tags: [CTF,DFIR Labs, Malware Analyst]
+tags: [CTF,DFIR Labs, Malware Analyst,FTK Imager]
 ---
 
 Covid Crime Scenario
