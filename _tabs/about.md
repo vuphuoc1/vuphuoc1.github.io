@@ -5,4 +5,5 @@ order: 4
 ---
 
 ## Vux_Phuoc
-Hack to learn not learn to hack.
+Just Vux_Phuoc, a man who has fallen in love with a muse.
+> *"Should hack to learn, not learn to hack."*
