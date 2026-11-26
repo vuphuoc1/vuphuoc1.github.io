@@ -1,8 +1,8 @@
 ---
-title: "2025-11-09-Acknowledge-The-Corn"
+title: "Acknowledge The Corn"
 date: 2025-11-09 12:00:00 +0700
 categories: [Hack The Box]
-tags: [CTF, Malware Analyst]
+tags: [CTF, Malware Analyst,PCAP,Memory Dump]
 Difficulty: [Hard]
 render_with_liquid: false
 ---
