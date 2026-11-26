@@ -1,5 +1,3 @@
-DFIR 2025 Ⅰ - Lost In Router
-
 ---
 render_with_liquid: false
 title: "DFIR 2025 Ⅰ - Lost In Router"
