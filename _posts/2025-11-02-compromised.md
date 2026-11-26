@@ -3,7 +3,7 @@ render_with_liquid: false
 title: "Compromised"
 date: 2025-11-02 12:00:00 +0700
 categories: [DFIR]
-tags: [CTF,DFIR Labs, Malware Analyst]
+tags: [CTF,DFIR Labs, Malware Analyst,PCAP]
 ---
 
 Tải chall về thu được 1 file pcap và mình thấy được 1 file là client.py :
