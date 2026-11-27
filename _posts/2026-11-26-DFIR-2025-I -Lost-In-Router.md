@@ -119,7 +119,8 @@ Nhân viên mở portal.r3.internal sẽ bị chuyển sang trang Netlify của 
 Sau kh có hết đáp án mình tiến hành solved và thu được flag:
 
 
-<img width="1295" height="1010" alt="image" src="https://github.com/user-attachments/assets/412ac798-1662-4396-9619-f336d1c7fc1c" />
+<img width="1237" height="927" alt="image" src="https://github.com/user-attachments/assets/0de5aae1-0d1e-4d8a-8c68-394320b9c405" />
+
 
 
 Flag: r3ctf{5d183d839ac09722d4b1d1553adb5a3bf0839fb787bc2ab72935e99fabbd6cab}
