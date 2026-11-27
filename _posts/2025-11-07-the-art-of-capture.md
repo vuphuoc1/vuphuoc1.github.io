@@ -432,7 +432,7 @@ Tiếp đến là part2 , chắc chắn nó nằm trong rev.exe, việc cần l�
 
 Có 1 thông tin hữu ích là rev.exe có id là 37fd453cbfb4794f48283819f010a9fe nhưng khi mình lọc trong wireshark thì tìm không thấy, vậy nên mình đoán id này không tồn tại trong wireshark dưới dạng plaintext hoặc lưu trong phần body, header, vậy nên mình lần theo khoảng frame từ 385 cho tới 452.
 
-Bash: tshark -r capture.pcapng -Y "frame.number>=385 && frame.number<=452 && http" -T fields -e frame.number -e ip.src -e http.request.method -e http.request.uri -e http.response.code -e http.content_length
+Bash: ```tshark -r capture.pcapng -Y "frame.number>=385 && frame.number<=452 && http" -T fields -e frame.number -e ip.src -e http.request.method -e http.request.uri -e http.response.code -e http.content_length```
 
 <img width="1480" height="658" alt="image" src="https://github.com/user-attachments/assets/73ba1b91-11f9-4fcd-8697-3a4dc9beaee6" />
 
