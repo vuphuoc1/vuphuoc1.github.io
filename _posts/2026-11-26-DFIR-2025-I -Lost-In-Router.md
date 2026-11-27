@@ -116,3 +116,11 @@ if (window.location.host == "portal.r3.internal")
 
 Nhân viên mở portal.r3.internal sẽ bị chuyển sang trang Netlify của kẻ tấn công. 
 
+Sau kh có hết đáp án mình tiến hành solved và thu được flag:
+
+
+<img width="1295" height="1010" alt="image" src="https://github.com/user-attachments/assets/412ac798-1662-4396-9619-f336d1c7fc1c" />
+
+
+Flag: r3ctf{5d183d839ac09722d4b1d1553adb5a3bf0839fb787bc2ab72935e99fabbd6cab}
+
